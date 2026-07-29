@@ -41,8 +41,9 @@ use datafusion_distributed::TaskKey;
 use datafusion_proto::physical_plan::DefaultPhysicalProtoConverter;
 
 use crate::gucs::{
-    mpp_queue_size as gucs_mpp_queue_size, mpp_worker_count as gucs_mpp_worker_count,
+    mpp_queue_size as gucs_mpp_queue_size, mpp_worker_count as gucs_mpp_worker_count, WorkMem,
 };
+use crate::postgres::customscan::datafusion::memory::create_transport_memory_pool;
 use crate::postgres::customscan::mpp::pg_seams::{pack_receiver, PgInterrupt, PgWakeup};
 use crate::postgres::ParallelScanState;
 
@@ -234,6 +235,9 @@ pub unsafe fn leader_setup(
     }
     .map_err(|e| e.to_string())?;
     let mesh = attach.mesh;
+    // Reassembled oversized frames draw from the backend's work_mem budget, so an
+    // over-budget frame fails with the work_mem error instead of growing unaccounted heap.
+    mesh.set_transport_memory_pool(&create_transport_memory_pool(WorkMem::Postgres.bytes()));
     if let Some(t) = t_setup {
         pgrx::warning!(
             "mpp trace: leader_setup (ring create + self attach) took {:.3} ms",
@@ -484,6 +488,9 @@ pub unsafe fn worker_setup(
         );
     }
 
+    attach
+        .mesh
+        .set_transport_memory_pool(&create_transport_memory_pool(WorkMem::Postgres.bytes()));
     Ok(MppWorkerState {
         outbound_senders: attach.outbound_senders,
         plan_bytes: attach.plan_bytes,

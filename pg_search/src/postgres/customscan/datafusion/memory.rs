@@ -112,6 +112,12 @@ pub fn create_memory_pool(
     Arc::new(WorkMemMemoryPool::new(total_memory.max(work_mem)))
 }
 
+/// A pool for allocations that live outside any single plan, sized at plain `work_mem`:
+/// the MPP transport's frame reassembly has no operator tree to walk for an estimate.
+pub fn create_transport_memory_pool(limit: usize) -> Arc<dyn MemoryPool> {
+    Arc::new(WorkMemMemoryPool::new(limit))
+}
+
 /// Build the DataFusion `RuntimeEnv` for JoinScan and AggregateScan: the `work_mem` pool plus a
 /// disabled disk manager, so a `try_grow` past the budget errors instead of writing untracked
 /// temp files. Spilling isn't wired to PG's temp-file management yet.
