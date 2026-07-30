@@ -152,18 +152,16 @@ static MPP_WORKER_COUNT: GucSetting<i32> = GucSetting::<i32>::new(4);
 /// (leader plus workers), so the mesh region is about `N × mpp_queue_size`, and
 /// Postgres commits the whole region on creation (`posix_fallocate` in the Linux
 /// DSM path, to avoid a later SIGBUS under overcommit), so the region size is a
-/// fixed per-query launch cost: at N=4 the default 16 MiB reserves ~64 MiB per
-/// query. The default favors that launch cost over headroom for the biggest
-/// aggregates: a frame must fit a single ring whole, and a GROUP BY partial
-/// aggregate at tens of millions of rows can ship a frame past 16 MiB; such a
-/// query fails with the transport's raise-the-knob error, and this GUC is the
-/// knob to raise. That runtime reach is the explicit reason it's exposed
-/// instead of held as a `pub const`.
+/// fixed per-query launch cost. The default keeps that cost inside Docker's
+/// default 64 MiB `/dev/shm` with room to spare: at N=4 it reserves ~32 MiB per
+/// query. Frames larger than a ring stream through it in chunks, so the size
+/// bounds backpressure granularity and launch cost, not what a query can carry.
+/// The runtime tuning reach is the reason it's a GUC instead of a `pub const`.
 ///
 /// The inboxes already multiplex tagged frames from every stage; if this knob
 /// changes shape, the right user knob is more likely a per-query DSM cap than
 /// a raw per-inbox byte count.
-static MPP_QUEUE_SIZE: GucSetting<i32> = GucSetting::<i32>::new(16 * 1024 * 1024);
+static MPP_QUEUE_SIZE: GucSetting<i32> = GucSetting::<i32>::new(8 * 1024 * 1024);
 
 /// The maximum size of an InList that can be pushed down to a TermSet Query.
 static HASH_JOIN_INLIST_PUSHDOWN_MAX_SIZE: GucSetting<i32> =
@@ -628,10 +626,10 @@ pub fn init() {
         c"Sets the per-inbox ring size for MPP shuffles. Accepts standard \
           Postgres byte units (e.g. '64MB', '1GB', '512kB'). Each query lays out \
           one inbox per proc, so total DSM per query is about `N x mpp_queue_size`; \
-          at the default 16MB and N=4 that is ~64MB per query. Lower this on \
-          memory-constrained boxes; raise it when a large GROUP BY fails with the \
-          frame-exceeds-ring-capacity error or a shuffle batch routinely backs up \
-          the ring.",
+          at the default 8MB and N=4 that is ~32MB per query, within Docker's \
+          default 64MB /dev/shm. Frames larger than a ring stream through it in \
+          chunks. Lower this on memory-constrained boxes; raise it when shuffle \
+          batches routinely back up the ring.",
         &MPP_QUEUE_SIZE,
         64 * 1024,
         1024 * 1024 * 1024,
